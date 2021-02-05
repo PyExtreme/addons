@@ -26,11 +26,10 @@ import numpy as np
 
 import tensorflow as tf
 
+from tensorflow_addons.utils import keras_utils
+
 # TODO: Find public API alternatives to these
 from tensorflow.python.keras.engine import base_layer_utils
-from tensorflow.python.ops import rnn_cell_impl
-
-_zero_state_tensors = rnn_cell_impl._zero_state_tensors  # pylint: disable=protected-access
 
 
 class AttentionMechanism(object):
@@ -141,8 +140,7 @@ class _BaseAttentionMechanism(AttentionMechanism, tf.keras.layers.Layer):
     @property
     def memory_initialized(self):
         """Returns `True` if this attention mechanism has been initialized with
-        a memory.
-        """
+        a memory."""
         return self._memory_initialized
 
     def build(self, input_shape):
@@ -411,8 +409,7 @@ class _BaseAttentionMechanism(AttentionMechanism, tf.keras.layers.Layer):
           A `dtype` tensor shaped `[batch_size, alignments_size]`
           (`alignments_size` is the values' `max_time`).
         """
-        max_time = self._alignments_size
-        return _zero_state_tensors(max_time, batch_size, dtype)
+        return tf.zeros([batch_size, self._alignments_size], dtype=dtype)
 
     def initial_state(self, batch_size, dtype):
         """Creates the initial state values for the `AttentionWrapper` class.
@@ -747,7 +744,7 @@ class BahdanauAttention(_BaseAttentionMechanism):
                 and self.attention_b is None):
             self.attention_g = self.add_weight(
                 "attention_g",
-                initializer=tf.compat.v1.constant_initializer(
+                initializer=tf.constant_initializer(
                     math.sqrt((1. / self.units))),
                 shape=())
             self.attention_b = self.add_weight(
@@ -1105,14 +1102,13 @@ class BahdanauMonotonicAttention(_BaseMonotonicAttentionMechanism):
                 "attention_score_bias",
                 shape=(),
                 dtype=self.dtype,
-                initializer=tf.compat.v1.constant_initializer(
-                    self.score_bias_init, dtype=self.dtype))
+                initializer=tf.constant_initializer(self.score_bias_init))
         if (self.normalize and self.attention_g is None
                 and self.attention_b is None):
             self.attention_g = self.add_weight(
                 "attention_g",
                 dtype=self.dtype,
-                initializer=tf.compat.v1.constant_initializer(
+                initializer=tf.constant_initializer(
                     math.sqrt((1. / self.units))),
                 shape=())
             self.attention_b = self.add_weight(
@@ -1265,8 +1261,7 @@ class LuongMonotonicAttention(_BaseMonotonicAttentionMechanism):
             self.attention_score_bias = self.add_weight(
                 "attention_score_bias",
                 shape=(),
-                initializer=tf.compat.v1.constant_initializer(
-                    self.score_bias_init, self.dtype))
+                initializer=tf.constant_initializer(self.score_bias_init))
         self.built = True
 
     def _calculate_attention(self, query, state):
@@ -1364,12 +1359,9 @@ class AttentionWrapperState(
                 if not tf.executing_eagerly():
                     new_shape = tf.shape(new)
                     old_shape = tf.shape(old)
-                    with tf.control_dependencies([
-                            tf.compat.v1.assert_equal(  # pylint: disable=bad-continuation
-                                new_shape,
-                                old_shape,
-                                data=[new_shape, old_shape])
-                    ]):
+                    assert_equal = tf.debugging.assert_equal(
+                        new_shape, old_shape)
+                    with tf.control_dependencies([assert_equal]):
                         # Add an identity op so that control deps can kick in.
                         return tf.identity(new)
                 else:
@@ -1467,7 +1459,7 @@ def _maybe_mask_score(score,
         message = ("All values in memory_sequence_length must greater than "
                    "zero.")
         with tf.control_dependencies([
-                tf.compat.v1.assert_positive(  # pylint: disable=bad-continuation
+                tf.debugging.assert_positive(  # pylint: disable=bad-continuation
                     memory_sequence_length,
                     message=message)
         ]):
@@ -1639,7 +1631,7 @@ class AttentionWrapper(tf.keras.layers.AbstractRNNCell):
             `attention_layer` are set simultaneously.
         """
         super(AttentionWrapper, self).__init__(name=name, **kwargs)
-        rnn_cell_impl.assert_like_rnncell("cell", cell)
+        keras_utils.assert_like_rnncell("cell", cell)
         if isinstance(attention_mechanism, (list, tuple)):
             self._is_multi = True
             attention_mechanisms = list(attention_mechanism)
@@ -1744,7 +1736,7 @@ class AttentionWrapper(tf.keras.layers.AbstractRNNCell):
     def _batch_size_checks(self, batch_size, error_message):
         self._attention_mechanisms_checks()
         return [
-            tf.compat.v1.assert_equal(
+            tf.debugging.assert_equal(
                 batch_size,
                 attention_mechanism.batch_size,
                 message=error_message)
@@ -1868,8 +1860,9 @@ class AttentionWrapper(tf.keras.layers.AbstractRNNCell):
             return AttentionWrapperState(
                 cell_state=cell_state,
                 time=tf.zeros([], dtype=tf.int32),
-                attention=_zero_state_tensors(self._get_attention_layer_size(),
-                                              batch_size, dtype),
+                attention=tf.zeros(
+                    [batch_size, self._get_attention_layer_size()],
+                    dtype=dtype),
                 alignments=self._item_or_tuple(initial_alignments),
                 attention_state=self._item_or_tuple(
                     attention_mechanism.initial_state(batch_size, dtype)
